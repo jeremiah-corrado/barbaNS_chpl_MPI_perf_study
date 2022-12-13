@@ -17,6 +17,6 @@ void printAndPlot(
 );
 
 void parseArgsWithDefaults(
-        int argc, const char *argv[],
+        int argc, char *argv[],
         unordered_map<string, variant<int, double>>& defaults
 );

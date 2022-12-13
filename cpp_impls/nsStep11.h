@@ -15,8 +15,8 @@ void runCavityFlowSim(
     vector<vector<double> >& u,
     vector<vector<double> >& v,
     vector<vector<double> >& b,
-    array<vector<double>, 2>& c_left,
-    array<vector<double>, 2>& c_right,
+    array<vector<double>, 2> c_left,
+    array<vector<double>, 2> c_right,
     const int nt,
     const int nit,
     const int world_size,
@@ -74,5 +74,6 @@ void update_halos(
     vector<vector<double> >& a,
     array<vector<double>, 2>& left_comm_buffers,
     array<vector<double>, 2>& right_comm_buffers,
-    int my_rank, int world_size
+    int my_rank, int world_size,
+    MPI_Status& status
 );

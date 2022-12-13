@@ -67,7 +67,7 @@ proc runCavityFlowSim(ref u, ref v, ref p) {
             v_np1(v, un, vn, p);
         }
 
-        // apply boundary conditions to u and v
+        // solve for u and v using the updated pressure values
         u_boundary(u);
         // v_boundary(v);
     }

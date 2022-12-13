@@ -12,7 +12,7 @@
     |       |       |       |       |   |
     |       |       |       |       |   |
     |       |       |       |       |   |
-    |  b0   |  b1   |  ...  |   bn  |   (ny) & (my_ny)
+    |  b0   |  b1   |  ...  |   bn  |   (ny == my_ny)
     |       |       |       |       |   |
     |       |       |       |       |   |
     |       |       |       |       |   |
@@ -22,8 +22,8 @@
 
 */
 
-int main(int argc, const char *argv[]) {
-    MPI_Init(&argc, argv);
+int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
 
     // define default values of constants
     unordered_map<string, variant<int, double>> default_args = {
@@ -95,8 +95,8 @@ void runCavityFlowSim(
     vector<vector<double> >& u,
     vector<vector<double> >& v,
     vector<vector<double> >& b,
-    array<vector<double>, 2>& c_left,
-    array<vector<double>, 2>& c_right,
+    array<vector<double>, 2> c_left,
+    array<vector<double>, 2> c_right,
     const int nt,
     const int nit,
     const int world_size,
@@ -110,28 +110,34 @@ void runCavityFlowSim(
     auto pn = p;
     auto un = u;
     auto vn = v;
+    MPI_Status status;
 
+    // run simulation for nt time steps
     for (int i = 0; i < nt; i++) {
         u.swap(un);
         v.swap(vn);
 
+        // solve for the component of p that depends solely on u and v
         comp_b(b, un, vn, dx, dy, dt, rho);
         MPI_Barrier(MPI_COMM_WORLD);
-        update_halos(b, c_left, c_right, my_rank, world_size);
+        update_halos(b, c_left, c_right, my_rank, world_size, status);
 
+        // iteratively solve for pressure
         for (int p_iter = 0; p_iter < nit; p_iter++) {
             p.swap(pn);
             p_np1(p, pn, b, dx, dy);
             MPI_Barrier(MPI_COMM_WORLD);
-            update_halos(p, c_left, c_right, my_rank, world_size);
+            update_halos(p, c_left, c_right, my_rank, world_size, status);
         }
 
+        // solve for u and v using the updated pressure values
         u_np1(u, un, vn, p, dx, dy, dt, rho, nu);
         v_np1(v, un, vn, p, dx, dy, dt, rho, nu);
 
+        // solve for u and v using the updated pressure values
         MPI_Barrier(MPI_COMM_WORLD);
-        update_halos(u, c_left, c_right, my_rank, world_size);
-        update_halos(v, c_left, c_right, my_rank, world_size);
+        update_halos(u, c_left, c_right, my_rank, world_size, status);
+        update_halos(v, c_left, c_right, my_rank, world_size, status);
     }
 }
 
@@ -174,11 +180,11 @@ void p_np1(
     #pragma omp parallel for default(none) shared(p, pn, b) firstprivate(dx, dy) collapse(2)
     for (int i = 1; i < p.size() - 1; i++) {
         for (int j = 1; j < p[0].size() - 1; j++) {
-            p[i][j] = (
+            p[i][j] = ((
                     pow(dy, 2) * (pn[i][j+1] + pn[i][j-1]) +
                     pow(dx, 2) * (pn[i+1][j] + pn[i-1][j])
-                ) / (2.0*(pow(dx, 2)+pow(dy, 2))) - pow(dx, 2) * pow(dy, 2) /
-                    (2.0*(pow(dx, 2)+pow(dy, 2))) * b[i, j];
+                ) / (2.0*(pow(dx, 2) + pow(dy, 2))) - pow(dx, 2) * pow(dy, 2) /
+                    (2.0*(pow(dx, 2) + pow(dy, 2))) * b[i][j]);
         }
     }
 }
@@ -195,13 +201,13 @@ void u_np1(
     const double nu
 
 ) {
-    #pragma omp parallel for default(none) shared(u, un, vn, p) firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    #pragma omp parallel for default(none) shared(u, un, vn, pn) firstprivate(dx, dy, dt, rho, nu) collapse(2)
     for (int i = 1; i < u.size() - 1; i++) {
         for (int j = 1; j < u[0].size() - 1; j++) {
             u[i][j] = un[i][j] -
                 un[i][j] * (dt / dx) * (un[i][j] - un[i][j-1]) -
                 vn[i][j] * (dt / dy) * (un[i][j] - un[i-1][j]) -
-                dt / (2.0 * rho * dx) * (p[i][j+1] - p[i][j-1]) +
+                dt / (2.0 * rho * dx) * (pn[i][j+1] - pn[i][j-1]) +
                 nu * (
                     (dt / pow(dx, 2)) * (un[i+1][j] - 2.0 * un[i][j] + un[i-1][j]) +
                     (dt / pow(dy, 2)) * (un[i][j+1] - 2.0 * un[i][j] + un[i][j-1])
@@ -221,13 +227,13 @@ void v_np1(
     const double rho,
     const double nu
 ) {
-    #pragma omp parallel for default(none) shared(v, un, vn, p) firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    #pragma omp parallel for default(none) shared(v, un, vn, pn) firstprivate(dx, dy, dt, rho, nu) collapse(2)
     for (int i = 1; i < v.size() - 1; i++) {
         for (int j = 1; j < v[0].size() - 1; j++) {
-            v[i, j] = vn[i, j] -
+            v[i][j] = vn[i][j] -
                 un[i][j] * (dt / dx) * (vn[i][j] - vn[i][j-1]) -
                 vn[i][j] * (dt / dy) * (vn[i][j] - vn[i-1][j]) -
-                dt / (2.0 * rho * dy) * (p[i+1][j] - p[i-1][j]) +
+                dt / (2.0 * rho * dy) * (pn[i+1][j] - pn[i-1][j]) +
                 nu * (
                     (dt / pow(dx, 2)) * (vn[i+1][j] - 2.0 * vn[i][j] + vn[i-1][j]) +
                     (dt / pow(dy, 2)) * (vn[i][j+1] - 2.0 * vn[i][j] + vn[i][j-1])
@@ -241,6 +247,7 @@ void update_halos(
     array<vector<double>, 2>& left_comm_buffers,
     array<vector<double>, 2>& right_comm_buffers,
     int my_rank, int world_size,
+    MPI_Status& status
 ) {
     // send the values just inside of my halos to my neighbors
     if (my_rank != 0) {
@@ -249,16 +256,16 @@ void update_halos(
     }
     if (my_rank != world_size - 1) {
         right_comm_buffers[0].assign(a[a.size() - 2].begin(), a[a.size() - 2].end());
-        MPI_Send(&right_comm_buffers[0][0], right_comm_buffers[0].size(), MPI_DOUBLE, my_rank - 1, 1, MPI_COMM_WORLD);
+        MPI_Send(&right_comm_buffers[0][0], right_comm_buffers[0].size(), MPI_DOUBLE, my_rank + 1, 1, MPI_COMM_WORLD);
     }
 
     // receive neighboring values and store them in my halos
     if (my_rank != 0) {
-        MPI_Recv(&left_comm_buffers[1][0], left_comm_buffers[1].size(), MPI_DOUBLE, my_rank - 1, 1, MPI_COMM_WORLD);
+        MPI_Recv(&left_comm_buffers[1][0], left_comm_buffers[1].size(), MPI_DOUBLE, my_rank - 1, 1, MPI_COMM_WORLD, &status);
         a[0].assign(left_comm_buffers[1].begin(), left_comm_buffers[1].end());
     }
     if (my_rank != world_size - 1) {
-        MPI_Recv(&right_comm_buffers[1][0], right_comm_buffers[1].size(), MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD);
+        MPI_Recv(&right_comm_buffers[1][0], right_comm_buffers[1].size(), MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD, &status);
         a.back().assign(right_comm_buffers[1].begin(), right_comm_buffers[1].end());
     }
 }
