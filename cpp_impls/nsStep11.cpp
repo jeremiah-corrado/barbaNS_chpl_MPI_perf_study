@@ -93,14 +93,14 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-vector<vector<double>> downSampleAndGather(
+void downSampleAndGather(
     vector<vector<double>>& a,
     vector<vector<double>>& a_global,
     const int my_rank,
     int xStride,
     int yStride,
     int nx,
-    int ny,
+    int ny
 ) {
     int sizes[2] = { nx / xStride, ny / yStride };
     int subsizes[2] = { (a.size() - 2) / xStride, ny / yStride };
@@ -118,27 +118,18 @@ vector<vector<double>> downSampleAndGather(
     MPI_Type_create_resized(columnSize, 0, sizeof(double), &columnOffset);
     MPI_Type_commit(&columnOffset);
 
-    double *recv_buff = NULL:
-    vector<vector<double>> full_strided;
-    if (my_rank == 0) {
-        for (int i = 0; i < nx; i++) {
-            full_strided.push_back(vector<double>(ny));
-        }
-        recv_buff = &full_strided[0];
-    }
-
     MPI_Gather(
         &a_strided[0],
         a_strided.size() * a_strided[0].size(),
         columnOffset,
-        recv_buff,
+        &a_global[0],
         a_strided.size() * a_strided[0].size(),
         columnOffset,
         0,
         MPI_COMM_WORLD
     );
 
-    MPI_Type_free (&columnOffset);
+    MPI_Type_free(&columnOffset);
 }
 
 void runCavityFlowSim(

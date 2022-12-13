@@ -73,3 +73,13 @@ void update_halos(
     int my_rank, int world_size,
     MPI_Status& status
 );
+
+void downSampleAndGather(
+    vector<vector<double>>& a,
+    vector<vector<double>>& a_global,
+    const int my_rank,
+    int xStride,
+    int yStride,
+    int nx,
+    int ny
+);
