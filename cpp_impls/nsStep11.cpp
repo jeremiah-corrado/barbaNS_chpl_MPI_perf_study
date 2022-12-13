@@ -70,16 +70,8 @@ int main(int argc, char *argv[]) {
     vector<vector<double> > v(my_nx + 2, vector<double>(my_ny, 0.0));
     vector<vector<double> > b(my_nx + 2, vector<double>(my_ny, 0.0));
 
-    // allocate 1D communication buffers
-    vector<double> c_left_recv(my_ny, 0.0);
-    vector<double> c_left_send(my_ny, 0.0);
-    vector<double> c_right_recv(my_ny, 0.0);
-    vector<double> c_right_send(my_ny, 0.0);
-
     runCavityFlowSim(
         p, u, v, b,
-        {c_left_recv, c_left_send},
-        {c_right_recv, c_right_send},
         nt, nit,
         world_size, my_rank,
         dx, dy, dt,
@@ -95,8 +87,6 @@ void runCavityFlowSim(
     vector<vector<double> >& u,
     vector<vector<double> >& v,
     vector<vector<double> >& b,
-    array<vector<double>, 2> c_left,
-    array<vector<double>, 2> c_right,
     const int nt,
     const int nit,
     const int world_size,
@@ -120,14 +110,14 @@ void runCavityFlowSim(
         // solve for the component of p that depends solely on u and v
         comp_b(b, un, vn, dx, dy, dt, rho);
         MPI_Barrier(MPI_COMM_WORLD);
-        update_halos(b, c_left, c_right, my_rank, world_size, status);
+        update_halos(b, my_rank, world_size, status);
 
         // iteratively solve for pressure
         for (int p_iter = 0; p_iter < nit; p_iter++) {
             p.swap(pn);
             p_np1(p, pn, b, dx, dy);
             MPI_Barrier(MPI_COMM_WORLD);
-            update_halos(p, c_left, c_right, my_rank, world_size, status);
+            update_halos(p, my_rank, world_size, status);
         }
 
         // solve for u and v using the updated pressure values
@@ -136,8 +126,8 @@ void runCavityFlowSim(
 
         // solve for u and v using the updated pressure values
         MPI_Barrier(MPI_COMM_WORLD);
-        update_halos(u, c_left, c_right, my_rank, world_size, status);
-        update_halos(v, c_left, c_right, my_rank, world_size, status);
+        update_halos(u, my_rank, world_size, status);
+        update_halos(v, my_rank, world_size, status);
     }
 }
 
@@ -244,28 +234,26 @@ void v_np1(
 
 void update_halos(
     vector<vector<double> >& a,
-    array<vector<double>, 2>& left_comm_buffers,
-    array<vector<double>, 2>& right_comm_buffers,
     int my_rank, int world_size,
     MPI_Status& status
 ) {
-    // send the values just inside of my halos to my neighbors
-    if (my_rank != 0) {
-        left_comm_buffers[0].assign(a[1].begin(), a[1].end());
-        MPI_Send(&left_comm_buffers[0][0], left_comm_buffers[0].size(), MPI_DOUBLE, my_rank - 1, 0, MPI_COMM_WORLD);
+    const int num_y = a[0].size();
+
+    // send right edge to the right
+    if (my_rank < world_size - 1) {
+        MPI_Send(&a[a.size() - 2][0], num_y, MPI_DOUBLE, my_rank + 1, 1, MPI_COMM_WORLD);
     }
-    if (my_rank != world_size - 1) {
-        right_comm_buffers[0].assign(a[a.size() - 2].begin(), a[a.size() - 2].end());
-        MPI_Send(&right_comm_buffers[0][0], right_comm_buffers[0].size(), MPI_DOUBLE, my_rank + 1, 1, MPI_COMM_WORLD);
+    // receive left halo from the left
+    if (my_rank > 0) {
+        MPI_Recv(&a[0][0], num_y, MPI_DOUBLE, my_rank -1, 1, MPI_COMM_WORLD, &status);
     }
 
-    // receive neighboring values and store them in my halos
-    if (my_rank != 0) {
-        MPI_Recv(&left_comm_buffers[1][0], left_comm_buffers[1].size(), MPI_DOUBLE, my_rank - 1, 1, MPI_COMM_WORLD, &status);
-        a[0].assign(left_comm_buffers[1].begin(), left_comm_buffers[1].end());
+    // send left edge to the left
+    if (my_rank > 0) {
+        MPI_Send(&a[1][0], num_y, MPI_DOUBLE, my_rank - 1, 2, MPI_COMM_WORLD);
     }
-    if (my_rank != world_size - 1) {
-        MPI_Recv(&right_comm_buffers[1][0], right_comm_buffers[1].size(), MPI_DOUBLE, my_rank + 1, 0, MPI_COMM_WORLD, &status);
-        a.back().assign(right_comm_buffers[1].begin(), right_comm_buffers[1].end());
+    // receive right halo from the right
+    if (my_rank < world_size - 1) {
+        MPI_Recv(&a[a.size() - 1][0], num_y, MPI_DOUBLE, my_rank + 1, 2, MPI_COMM_WORLD, &status);
     }
 }
