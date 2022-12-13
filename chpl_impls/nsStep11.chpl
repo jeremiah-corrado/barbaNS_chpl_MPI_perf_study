@@ -15,7 +15,9 @@ const dx = xLen / (nx - 1),
       dy = yLen / (ny - 1),
       dxy2 = 2.0 * (dx**2 + dy**2);
 
-config param createPlots = true;
+config param createPlots = true,
+             xStride = 2,
+             yStride = 2;
 
 // define 2D domain and distribution
 const dom = {0..<nx, 0..<ny};
@@ -31,12 +33,17 @@ var p : [DOM] real = 0.0, // pressure scalar
 runCavityFlowSim(p, u, v);
 
 // print results
-if createPlots then printAndPlot(
-    p, u, v,
-    (xLen, yLen),
-    "results/nsStep11",
-    "Cavity Flow Solution"
-);
+if createPlots {
+    const printDom = {0..<nx by xStride, 0..<ny by yStride};
+    printAndPlot(
+        p[printDom],
+        u[printDom],
+        v[printDom],
+        (xLen, yLen),
+        "results/nsStep11",
+        "Cavity Flow Solution"
+    );
+}
 
 proc runCavityFlowSim(ref u, ref v, ref p) {
     // temporary copies of computational domain

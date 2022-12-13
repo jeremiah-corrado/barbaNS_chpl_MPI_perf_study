@@ -33,6 +33,6 @@ ax[0].set_title("Pressure Gradient")
 ax[1].quiver(X, Y, u, v)
 ax[1].set_title("Quiver Flow Plot")
 
-fig.suptitle(sys.argv[2]);
+fig.suptitle(sys.argv[2])
 
-plt.show()
+plt.savefig(filePath + '.png')

@@ -1,7 +1,8 @@
 #include "nsStep11.h"
 
-
 /*
+
+    Distributed matrix layout:
 
     | ------------ (nx) ------------|
 
@@ -53,6 +54,8 @@ int main(int argc, char *argv[]) {
     const double dx = xLen / (nx - 1),
                  dy = yLen / (ny - 1);
 
+    const double xStride = 2, yStride = 2;
+
     // initialize MPI variables for this rank
     int world_size, my_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -60,7 +63,7 @@ int main(int argc, char *argv[]) {
 
     int my_nx = nx / world_size;
     if (nx % world_size != 0 && my_rank == world_size - 1) {
-        my_nx += (nx % world_size);
+        my_nx += (nx % world_size); // handle un-whole division
     }
     int my_ny = ny;
 
@@ -78,8 +81,64 @@ int main(int argc, char *argv[]) {
         rho, nu
     );
 
+    if (my_rank != 0) {
+        downSampleAndGather(p, VOID, my_rank, xStride, yStride);
+    } else {
+        vector<vector<double>> globalP(nx / xStride, vector<double>(ny / yStride, 0.0));
+        downSampleAndGather(p, globalP, my_rank, xStride, yStride);
+        printAndPlot(globalP, xLen, yLen, "./results/nsStep11", "Cavity Flow Solution", "");
+    }
+
     MPI_Finalize();
     return 0;
+}
+
+vector<vector<double>> downSampleAndGather(
+    vector<vector<double>>& a,
+    vector<vector<double>>& a_global,
+    const int my_rank,
+    int xStride,
+    int yStride,
+    int nx,
+    int ny,
+) {
+    int sizes[2] = { nx / xStride, ny / yStride };
+    int subsizes[2] = { (a.size() - 2) / xStride, ny / yStride };
+    int starts[2] = { 0, 0 };
+    MPI_Datatype columnSize, columnOffset;
+
+    vector<vector<double>> a_strided_local(subsizes[0], vector<double>(subsizes[1], 0.0));
+    for (int i = 0; i < a_strided.size(); i++) {
+        for (int j = 0; j < a_strided[0].size(); i++) {
+            a_strided[i, j] = a[i * xStride + 1][j * yStride];
+        }
+    }
+
+    MPI_Type_create_subarray(2, sizes, subsizes, starts, MPI_ORDER_R, MPI_DOUBLE, &columnSize);
+    MPI_Type_create_resized(columnSize, 0, sizeof(double), &columnOffset);
+    MPI_Type_commit(&columnOffset);
+
+    double *recv_buff = NULL:
+    vector<vector<double>> full_strided;
+    if (my_rank == 0) {
+        for (int i = 0; i < nx; i++) {
+            full_strided.push_back(vector<double>(ny));
+        }
+        recv_buff = &full_strided[0];
+    }
+
+    MPI_Gather(
+        &a_strided[0],
+        a_strided.size() * a_strided[0].size(),
+        columnOffset,
+        recv_buff,
+        a_strided.size() * a_strided[0].size(),
+        columnOffset,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Type_free (&columnOffset);
 }
 
 void runCavityFlowSim(
