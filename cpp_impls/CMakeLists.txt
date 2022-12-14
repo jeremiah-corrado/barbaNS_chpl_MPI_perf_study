@@ -26,7 +26,8 @@ if(OpenMP_CXX_FOUND)
     target_link_libraries(nsStep11 PUBLIC MPI::MPI_CXX)
 endif()
 
+add_compile_definitions(CREATEPLOTS)
+
 if($ENV{BUILDFORTEST})
-    add_compile_definitions(CREATEPLOTS)
     add_compile_definitions(TERMONTOL)
 endif()

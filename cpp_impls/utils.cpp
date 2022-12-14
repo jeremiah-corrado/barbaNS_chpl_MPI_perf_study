@@ -1,5 +1,42 @@
 #include "utils.h"
 
+void printForPlot(
+    vector<vector<double>> const& a,
+    string const& path,
+    double xLen, double yLen
+) {
+    const auto nx = a.size();
+    const auto ny = a[0].size();
+
+    ofstream metaFile;
+    metaFile.open(path + ".meta");
+    metaFile << setprecision(10);
+    metaFile << nx << ", " << ny << ", " << xLen << ", " << yLen << "\n";
+    metaFile.close();
+
+    ofstream dataFile;
+    dataFile.open(path + ".dat");
+    dataFile << setprecision(10);
+    for (auto const& xlayer : a) {
+        for (auto const& val : xlayer) {
+            dataFile << val << " ";
+        }
+        dataFile << "\n";
+    }
+    dataFile.close();
+}
+
+void flowPlot(
+    string const& path,
+    string const& title
+) {
+    stringstream plotCmd;
+    plotCmd << "Python3 ./surfPlot.py " << path << " " << title;
+    const string plotCmdString = plotCmd.str();
+    const char* plotCmdCString = plotCmdString.c_str();
+    std::system(plotCmdCString);
+}
+
 // Print 'a' to '{path}.dat' and the domain information to '{path}.meta'. Call python plotting script
 void printAndPlot(
         vector<vector<double> > const& a,

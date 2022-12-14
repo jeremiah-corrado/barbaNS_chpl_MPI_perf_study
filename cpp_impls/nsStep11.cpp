@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     const double dx = xLen / (nx - 1),
                  dy = yLen / (ny - 1);
 
-    const double xStride = 2, yStride = 2;
+    const double xStride = 1, yStride = 1;
 
     // initialize MPI variables for this rank
     int world_size, my_rank;
@@ -66,6 +66,8 @@ int main(int argc, char *argv[]) {
         my_nx += (nx % world_size); // handle un-whole division
     }
     int my_ny = ny;
+
+    cout << "from proc: " << my_rank << " ( " << my_nx << ", " << my_ny << " )\n";
 
     // allocate 2D solution vectors
     vector<vector<double> > p(my_nx + 2, vector<double>(my_ny, 0.0));
@@ -81,55 +83,15 @@ int main(int argc, char *argv[]) {
         rho, nu
     );
 
-    if (my_rank != 0) {
-        downSampleAndGather(p, VOID, my_rank, xStride, yStride);
-    } else {
-        vector<vector<double>> globalP(nx / xStride, vector<double>(ny / yStride, 0.0));
-        downSampleAndGather(p, globalP, my_rank, xStride, yStride);
-        printAndPlot(globalP, xLen, yLen, "./results/nsStep11", "Cavity Flow Solution", "");
-    }
+    #ifdef CREATEPLOTS
+        printDownSampled(p, my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        printDownSampled(u, my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        printDownSampled(v, my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        flowPlot("./results/nsStep11", "Cavity Flow Solution");
+    #endif
 
     MPI_Finalize();
     return 0;
-}
-
-void downSampleAndGather(
-    vector<vector<double>>& a,
-    vector<vector<double>>& a_global,
-    const int my_rank,
-    int xStride,
-    int yStride,
-    int nx,
-    int ny
-) {
-    int sizes[2] = { nx / xStride, ny / yStride };
-    int subsizes[2] = { (a.size() - 2) / xStride, ny / yStride };
-    int starts[2] = { 0, 0 };
-    MPI_Datatype columnSize, columnOffset;
-
-    vector<vector<double>> a_strided_local(subsizes[0], vector<double>(subsizes[1], 0.0));
-    for (int i = 0; i < a_strided.size(); i++) {
-        for (int j = 0; j < a_strided[0].size(); i++) {
-            a_strided[i, j] = a[i * xStride + 1][j * yStride];
-        }
-    }
-
-    MPI_Type_create_subarray(2, sizes, subsizes, starts, MPI_ORDER_R, MPI_DOUBLE, &columnSize);
-    MPI_Type_create_resized(columnSize, 0, sizeof(double), &columnOffset);
-    MPI_Type_commit(&columnOffset);
-
-    MPI_Gather(
-        &a_strided[0],
-        a_strided.size() * a_strided[0].size(),
-        columnOffset,
-        &a_global[0],
-        a_strided.size() * a_strided[0].size(),
-        columnOffset,
-        0,
-        MPI_COMM_WORLD
-    );
-
-    MPI_Type_free(&columnOffset);
 }
 
 void runCavityFlowSim(
@@ -306,4 +268,81 @@ void update_halos(
     if (my_rank < world_size - 1) {
         MPI_Recv(&a[a.size() - 1][0], num_y, MPI_DOUBLE, my_rank + 1, 2, MPI_COMM_WORLD, &status);
     }
+}
+
+void printDownSampled(
+    vector<vector<double>>& a,
+    int my_rank,
+    int world_size,
+    int xStride,
+    int yStride,
+    int nx,
+    int ny,
+    double xLen,
+    double yLen
+) {
+    if (my_rank != 0) {
+        vector<vector<double>> empty_global;
+        downSampleAndGather(a, empty_global, my_rank, world_size, xStride, yStride, nx, ny);
+    } else {
+        vector<vector<double>> globalA(nx / xStride, vector<double>(ny / yStride, 0.0));
+        downSampleAndGather(a, globalA, my_rank, world_size, xStride, yStride, nx, ny);
+        printForPlot(globalA, "./results/nsStep11", xLen, yLen);
+    }
+}
+
+void downSampleAndGather(
+    vector<vector<double>>& a,
+    vector<vector<double>>& a_global,
+    int my_rank,
+    int world_size,
+    int xStride,
+    int yStride,
+    int nx,
+    int ny
+) {
+    // sizes of global and local strided arrays
+    int sizes[2] = { static_cast<int>(nx / xStride),  static_cast<int>(ny / yStride) };
+    int subsizes[2] = { static_cast<int>((a.size() - 2) / xStride),  static_cast<int>(ny / yStride) };
+    int starts[2] = { 0, 0 };
+    MPI_Datatype columnSize, columnOffset;
+
+    MPI_Type_create_subarray(2, sizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, &columnSize);
+    MPI_Type_create_resized(columnSize, 0, subsizes[0]*sizeof(double), &columnOffset);
+    MPI_Type_commit(&columnOffset);
+
+    // fill the local strided array with the sparse grid of values from 'a'
+    vector<vector<double>> a_strided(subsizes[0], vector<double>(subsizes[1], 0.0));
+    // for (int i = 0; i < a_strided.size() - 1; i++) {
+    //     for (int j = 0; j < a_strided[0].size(); i++) {
+    //         a_strided[i][j] = a[i * xStride + 1][j * yStride];
+    //     }
+    // }
+
+    int sendcounts[world_size];
+    int displs[world_size];
+    double *global_ptr = NULL;
+
+    if (my_rank == 0) {
+        global_ptr = &(a_global[0][0]);
+        for (int i=0; i<world_size; i++) {
+            sendcounts[i] = 1;
+            displs[i] = i;
+        }
+    }
+
+    // gather the local strided arrays into the global strided array
+    MPI_Gatherv(
+        &(a_strided[0][0]),
+        subsizes[1],
+        MPI_DOUBLE,
+        global_ptr,
+        sendcounts,
+        displs,
+        columnOffset,
+        0,
+        MPI_COMM_WORLD
+    );
+
+    MPI_Type_free(&columnOffset);
 }
