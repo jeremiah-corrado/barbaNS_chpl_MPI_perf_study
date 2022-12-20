@@ -31,43 +31,7 @@ void flowPlot(
     string const& title
 ) {
     stringstream plotCmd;
-    plotCmd << "Python3 ./surfPlot.py " << path << " " << title;
-    const string plotCmdString = plotCmd.str();
-    const char* plotCmdCString = plotCmdString.c_str();
-    std::system(plotCmdCString);
-}
-
-// Print 'a' to '{path}.dat' and the domain information to '{path}.meta'. Call python plotting script
-void printAndPlot(
-        vector<vector<double> > const& a,
-        double xLen, double yLen,
-        string const& path,
-        string const& plotTitle,
-        string const& plotKey
-) {
-    const auto nx = a.size();
-    const auto ny = a[0].size();
-
-    ofstream metaFile;
-    metaFile.open(path + ".meta");
-    metaFile << setprecision(10);
-    metaFile << nx << ", " << ny << ", " << xLen << ", " << yLen << "\n";
-    metaFile.close();
-
-    ofstream dataFile;
-    dataFile.open(path + ".dat");
-    dataFile << setprecision(10);
-    for (auto const& xlayer : a) {
-        for (auto const& val : xlayer) {
-            dataFile << val << " ";
-        }
-        dataFile << "\n";
-    }
-    dataFile.close();
-
-    // run matplotlib script
-    stringstream plotCmd;
-    plotCmd << "Python3 ./surfPlot.py " << path << " " << plotTitle << " " << plotKey;
+    plotCmd << "Python3 ./flowPlot.py " << path << " " << title;
     const string plotCmdString = plotCmd.str();
     const char* plotCmdCString = plotCmdString.c_str();
     std::system(plotCmdCString);

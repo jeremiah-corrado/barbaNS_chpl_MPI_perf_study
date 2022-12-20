@@ -15,12 +15,14 @@ void runCavityFlowSim(
     vector<vector<double> >& u,
     vector<vector<double> >& v,
     vector<vector<double> >& b,
+    const int ranges[2][2],
     const int nt,
     const int nit,
     const int world_size,
     const int my_rank,
     const double dx,
     const double dy,
+    const double dxy2,
     const double dt,
     const double rho,
     const double nu
@@ -30,6 +32,7 @@ void comp_b(
     vector<vector<double> >& b,
     vector<vector<double> > const& u,
     vector<vector<double> > const& v,
+    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
@@ -40,15 +43,20 @@ void p_np1(
     vector<vector<double> >& p,
     vector<vector<double> > const& pn,
     vector<vector<double> > const& b,
+    const int ranges[2][2],
     const double dx,
-    const double dy
+    const double dy,
+    const double dxy2
 );
+
+void p_boundary(vector<vector<double>>& p, int my_rank);
 
 void u_np1(
     vector<vector<double> >& u,
     vector<vector<double> > const& un,
     vector<vector<double> > const& vn,
     vector<vector<double> > const& p,
+    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
@@ -61,6 +69,7 @@ void v_np1(
     vector<vector<double> > const& un,
     vector<vector<double> > const& vn,
     vector<vector<double> > const& p,
+    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
@@ -76,6 +85,7 @@ void update_halos(
 
 void printDownSampled(
     vector<vector<double>>& a,
+    char name,
     int my_rank,
     int world_size,
     int xStride, int yStride,

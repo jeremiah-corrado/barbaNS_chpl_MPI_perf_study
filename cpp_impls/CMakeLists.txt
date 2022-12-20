@@ -8,6 +8,8 @@ project(
 )
 set(CMAKE_CXX_STANDARD 17)
 
+set(CMAKE_BUILD_TYPE Debug)
+
 # define library for shared utility code
 add_library(ns_utils utils.cpp utils.h)
 

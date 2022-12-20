@@ -26,14 +26,15 @@
 void writeDistArray(vector<vector<double>>& a, int my_rank, int world_size) {
     for (int p = 0; p < world_size; p++) {
         if (my_rank == p) {
-            printf("On proc %d:\n", p);
-            for (int r = 0; r < a[0].size(); r++) {
-                printf("[%2.3f | ", a[0][r]);
-                for (int c = 1; c < a.size() - 1; c++) {
-                    printf("%2.3f ", a[c][r]);
+            printf("On proc %d:\n", my_rank);
+            for (const auto& row: a) {
+                printf("|");
+                for (auto v : row) {
+                    printf("%2.3f ", v);
                 }
-                printf("| %2.3f]\n", a[a.size()-1][r]);
+                printf("|\n");
             }
+            printf("wut?");
         }
         MPI_Barrier(MPI_COMM_WORLD);
     }
@@ -52,9 +53,7 @@ int main(int argc, char *argv[]) {
             {"nit", 50},
             {"dt", 0.001},
             {"rho", 1.0},
-            {"nu", 0.1},
-            {"xStride", 2},
-            {"yStride", 2}
+            {"nu", 0.1}
     };
     // overwrite defaults with command line arguments if present
     parseArgsWithDefaults(argc, argv, default_args);
@@ -67,55 +66,54 @@ int main(int argc, char *argv[]) {
     const int nx  = get<int>(default_args.at("nx")),
               ny  = get<int>(default_args.at("ny")),
               nt  = get<int>(default_args.at("nt")),
-              nit = get<int>(default_args.at("nit")),
-              xStride = get<int>(default_args.at("xStride")),
-              yStride = get<int>(default_args.at("yStride"));
+              nit = get<int>(default_args.at("nit"));
 
     const double dx = xLen / (nx - 1),
-                 dy = yLen / (ny - 1),
-                 dxy2 = 2.0 * (pow(dx, 2) + pow(dy, 2));
+                 dy = yLen / (ny - 1);
+
+    const int xStride = 1, yStride = 1;
 
     // initialize MPI variables for this rank
-    int size, rank;
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int world_size, my_rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    // define the sizes of various arrays along x and y (giving extra elements to rank 0)
-    const int global_sizes   [2] = {nx, ny},
-              local_sizes    [2] = {((nx%size != 0 && rank == 0) ? (nx/size) + (nx%size) : nx / size), ny},
-              global_strided [2] = {nx / xStride, ny / yStride},
-              local_strided  [2] = {local_sizes[0] / xStride, local_sizes[1] / yStride};
+    int my_nx = nx / world_size;
+    if (nx % world_size != 0 && my_rank == world_size - 1) {
+        my_nx += (nx % world_size); // handle un-whole division
+    }
+    int my_ny = ny;
 
-    // define the iteration bounds (handling edge cases)
-    const int local_iter_ranges[2][2] = {
-        { (rank == 0) ? 2 : 1, local_sizes[0] - ((rank == size-1) ? 1 : 0) },
-        { 1, local_sizes[1] - 1 }
-    };
+    cout << "proc: " << my_rank <<  " \tglobal sizes ( " << nx << ", " << ny <<
+        ")\tlocal sizes ( " << my_nx << ", " << my_ny << " )\n";
 
-    printf(
-        "From rank %d : local size [%d, %d] \t global size [%d, %d] \t i-range [%d - %d] \t j-range [%d - %d]\n",
-        rank,
-        local_sizes[0], local_sizes[1],
-        global_sizes[0], global_sizes[1],
-        local_iter_ranges[0][0], local_iter_ranges[0][1],
-        local_iter_ranges[1][0], local_iter_ranges[1][1]
+    // allocate 2D solution vectors
+    vector<vector<double> > p(my_nx + 2, vector<double>(my_ny, 0.0));
+    vector<vector<double> > u(my_nx + 2, vector<double>(my_ny, 0.0));
+    vector<vector<double> > v(my_nx + 2, vector<double>(my_ny, 0.0));
+    vector<vector<double> > b(my_nx + 2, vector<double>(my_ny, 0.0));
+
+    runCavityFlowSim(
+        p, u, v, b,
+        nt, nit,
+        world_size, my_rank,
+        dx, dy, dt,
+        rho, nu
     );
 
-    vector<vector<double>> p(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
-    vector<vector<double>> u(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
-    vector<vector<double>> v(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
-    vector<vector<double>> b(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
+    printf("P array: \n");
+    writeDistArray(p, my_rank, world_size);
 
-    if (rank == size - 1) {
-        for(int j = 0; j < local_sizes[1]; j++) {
-            u[u.size()-2][j] = 1.0;
-        }
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    writeDistArray(u, rank, size);
-    runCavityFlowSim(p, u, v, b, local_iter_ranges, nt, nit, size, rank, dx, dy, dxy2, dt, rho, nu);
-    writeDistArray(u, rank, size);
+    #ifdef CREATEPLOTS
+        MPI_Barrier(MPI_COMM_WORLD);
+        printDownSampled(p, 'p', my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        MPI_Barrier(MPI_COMM_WORLD);
+        printDownSampled(u, 'u', my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        MPI_Barrier(MPI_COMM_WORLD);
+        printDownSampled(v, 'v', my_rank, world_size, xStride, yStride, nx, ny, xLen, yLen);
+        MPI_Barrier(MPI_COMM_WORLD);
+        flowPlot("./results/nsStep11", "Cavity Flow Solution");
+    #endif
 
     MPI_Finalize();
     return 0;
@@ -126,14 +124,12 @@ void runCavityFlowSim(
     vector<vector<double> >& u,
     vector<vector<double> >& v,
     vector<vector<double> >& b,
-    const int ranges[2][2],
     const int nt,
     const int nit,
     const int world_size,
     const int my_rank,
     const double dx,
     const double dy,
-    const double dxy2,
     const double dt,
     const double rho,
     const double nu
@@ -145,27 +141,25 @@ void runCavityFlowSim(
 
     // run simulation for nt time steps
     for (int i = 0; i < nt; i++) {
-        MPI_Barrier(MPI_COMM_WORLD);
         u.swap(un);
         v.swap(vn);
 
         // solve for the component of p that depends solely on u and v
-        comp_b(b, un, vn, ranges, dx, dy, dt, rho);
+        comp_b(b, un, vn, dx, dy, dt, rho);
         MPI_Barrier(MPI_COMM_WORLD);
         update_halos(b, my_rank, world_size, status);
 
         // iteratively solve for pressure
         for (int p_iter = 0; p_iter < nit; p_iter++) {
             p.swap(pn);
-            p_np1(p, pn, b, ranges, dx, dy, dxy2);
-            p_boundary(p, my_rank);
+            p_np1(p, pn, b, dx, dy);
             MPI_Barrier(MPI_COMM_WORLD);
             update_halos(p, my_rank, world_size, status);
         }
 
         // solve for u and v using the updated pressure values
-        u_np1(u, un, vn, p, ranges, dx, dy, dt, rho, nu);
-        v_np1(v, un, vn, p, ranges, dx, dy, dt, rho, nu);
+        u_np1(u, un, vn, p, dx, dy, dt, rho, nu);
+        v_np1(v, un, vn, p, dx, dy, dt, rho, nu);
 
         // solve for u and v using the updated pressure values
         MPI_Barrier(MPI_COMM_WORLD);
@@ -178,7 +172,6 @@ void comp_b(
     vector<vector<double> >& b,
     vector<vector<double> > const& u,
     vector<vector<double> > const& v,
-    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
@@ -208,35 +201,18 @@ void p_np1(
     vector<vector<double> >& p,
     vector<vector<double> > const& pn,
     vector<vector<double> > const& b,
-    const int ranges[2][2],
     const double dx,
-    const double dy,
-    const double dxy2
+    const double dy
 ) {
-    #pragma omp parallel for default(none) shared(p, pn, b, ranges) firstprivate(dx, dy, dxy2) collapse(2)
-    for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
-        for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
-            p[i][j] = (
+    #pragma omp parallel for default(none) shared(p, pn, b) firstprivate(dx, dy) collapse(2)
+    for (int i = 1; i < p.size() - 1; i++) {
+        for (int j = 1; j < p[0].size() - 1; j++) {
+            p[i][j] = ((
                     pow(dy, 2) * (pn[i][j+1] + pn[i][j-1]) +
                     pow(dx, 2) * (pn[i+1][j] + pn[i-1][j])
-                ) / dxy2 - pow(dx, 2) * pow(dy, 2) / dxy2 * b[i][j];
+                ) / (2.0*(pow(dx, 2) + pow(dy, 2))) - pow(dx, 2) * pow(dy, 2) /
+                    (2.0*(pow(dx, 2) + pow(dy, 2))) * b[i][j]);
         }
-    }
-}
-
-void p_boundary(vector<vector<double>>& p, int my_rank) {
-    // left wall
-    if (my_rank == 0) {
-        #pragma omp parallel for default(none) shared(p)
-        for (int j = 0; j < p[0].size(); j++) {
-            p[1][j] = p[2][j];
-        }
-    }
-    // top/bottom walls
-    #pragma omp parallel for default(none) shared(p)
-    for (int i = 0; i < p.size(); i++) {
-        p[i][0] = p[i][1];
-        p[i][p[0].size()-1] = p[i][p[0].size()-2];
     }
 }
 
@@ -245,7 +221,6 @@ void u_np1(
     vector<vector<double> > const& un,
     vector<vector<double> > const& vn,
     vector<vector<double> > const& pn,
-    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
@@ -273,7 +248,6 @@ void v_np1(
     vector<vector<double> > const& un,
     vector<vector<double> > const& vn,
     vector<vector<double> > const& pn,
-    const int ranges[2][2],
     const double dx,
     const double dy,
     const double dt,
