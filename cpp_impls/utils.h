@@ -8,12 +8,17 @@
 
 using namespace std;
 
-void flowPlot(string const& path, string const& title);
+void flowPlot(
+    string const& path,
+    string const& title,
+    int nx, int ny,
+    double xLen, double yLen
+);
 
 void printForPlot(
-    vector<vector<double>> const& a,
+    vector<double> const& a,
     string const& path,
-    double xLen, double yLen
+    int ny
 );
 
 void parseArgsWithDefaults(

@@ -80,15 +80,15 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // define the sizes of various arrays along x and y (giving extra elements to rank 0)
+    // define the sizes of various arrays along x and y (giving any extra elements to rank 0)
     const int global_sizes   [2] = {nx, ny},
               local_sizes    [2] = {((nx%size != 0 && rank == 0) ? (nx/size) + (nx%size) : nx / size), ny},
               global_strided [2] = {nx / xStride, ny / yStride},
               local_strided  [2] = {local_sizes[0] / xStride, local_sizes[1] / yStride};
 
-    // define the iteration bounds (handling edge cases)
+    // define the iteration bounds (handling edge cases - halos on the left and right are unused)
     const int local_iter_ranges[2][2] = {
-        { (rank == 0) ? 2 : 1, local_sizes[0] - ((rank == size-1) ? 1 : 0) },
+        { (rank == 0) ? 2 : 1, local_sizes[0] + ((rank == size-1) ? 0 : 1) },
         { 1, local_sizes[1] - 1 }
     };
 
@@ -106,16 +106,23 @@ int main(int argc, char *argv[]) {
     vector<vector<double>> v(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
     vector<vector<double>> b(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
 
+    // u-boundary on right wall
     if (rank == size - 1) {
         for(int j = 0; j < local_sizes[1]; j++) {
+            // u[u.size()-1] would be inside the unused halo
             u[u.size()-2][j] = 1.0;
         }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    writeDistArray(u, rank, size);
+    // writeDistArray(p, rank, size);
     runCavityFlowSim(p, u, v, b, local_iter_ranges, nt, nit, size, rank, dx, dy, dxy2, dt, rho, nu);
-    writeDistArray(u, rank, size);
+    writeDistArray(p, rank, size);
+
+    printDownSampled(p, 'p', rank, size, xStride, yStride, nx, ny);
+    printDownSampled(u, 'u', rank, size, xStride, yStride, nx, ny);
+    printDownSampled(v, 'v', rank, size, xStride, yStride, nx, ny);
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) flowPlot("results/nsStep11", "Cavity Flow Solution", global_strided[0], global_strided[1], xLen, yLen);
 
     MPI_Finalize();
     return 0;
@@ -153,6 +160,7 @@ void runCavityFlowSim(
         comp_b(b, un, vn, ranges, dx, dy, dt, rho);
         MPI_Barrier(MPI_COMM_WORLD);
         update_halos(b, my_rank, world_size, status);
+        MPI_Barrier(MPI_COMM_WORLD);
 
         // iteratively solve for pressure
         for (int p_iter = 0; p_iter < nit; p_iter++) {
@@ -161,6 +169,7 @@ void runCavityFlowSim(
             p_boundary(p, my_rank);
             MPI_Barrier(MPI_COMM_WORLD);
             update_halos(p, my_rank, world_size, status);
+            MPI_Barrier(MPI_COMM_WORLD);
         }
 
         // solve for u and v using the updated pressure values
@@ -186,11 +195,12 @@ void comp_b(
 ) {
     double du, dv;
 
-    #pragma omp parallel for default(none) shared(b, u, v) firstprivate(dx, dy, dt, rho) private(du, dv) collapse(2)
-    for (int i = 1; i < b.size() - 1; i++) {
-        for (int j = 1; j < b[0].size() - 1; j++) {
+    // #pragma omp parallel for default(none) shared(b, u, v, ranges) \
+    //     firstprivate(dx, dy, dt, rho) private(du, dv) collapse(2)
+    for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
+        for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             du = u[i][j+1] - u[i][j-1];
-            dv = u[i+1][j] - u[i-1][j];
+            dv = v[i+1][j] - v[i-1][j];
 
             b[i][j] = rho * (1.0 / dt) *
                 (du / (2.0 * dx) + dv / (2.0 * dy)) -
@@ -213,7 +223,8 @@ void p_np1(
     const double dy,
     const double dxy2
 ) {
-    #pragma omp parallel for default(none) shared(p, pn, b, ranges) firstprivate(dx, dy, dxy2) collapse(2)
+    // #pragma omp parallel for default(none) shared(p, pn, b, ranges) \
+    //     firstprivate(dx, dy, dxy2) collapse(2)
     for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
         for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             p[i][j] = (
@@ -227,13 +238,13 @@ void p_np1(
 void p_boundary(vector<vector<double>>& p, int my_rank) {
     // left wall
     if (my_rank == 0) {
-        #pragma omp parallel for default(none) shared(p)
+        // #pragma omp parallel for default(none) shared(p)
         for (int j = 0; j < p[0].size(); j++) {
             p[1][j] = p[2][j];
         }
     }
     // top/bottom walls
-    #pragma omp parallel for default(none) shared(p)
+    // #pragma omp parallel for default(none) shared(p)
     for (int i = 0; i < p.size(); i++) {
         p[i][0] = p[i][1];
         p[i][p[0].size()-1] = p[i][p[0].size()-2];
@@ -253,9 +264,10 @@ void u_np1(
     const double nu
 
 ) {
-    #pragma omp parallel for default(none) shared(u, un, vn, pn) firstprivate(dx, dy, dt, rho, nu) collapse(2)
-    for (int i = 1; i < u.size() - 1; i++) {
-        for (int j = 1; j < u[0].size() - 1; j++) {
+    // #pragma omp parallel for default(none) shared(u, un, vn, pn, ranges) \
+    //     firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
+        for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             u[i][j] = un[i][j] -
                 un[i][j] * (dt / dx) * (un[i][j] - un[i][j-1]) -
                 vn[i][j] * (dt / dy) * (un[i][j] - un[i-1][j]) -
@@ -280,9 +292,10 @@ void v_np1(
     const double rho,
     const double nu
 ) {
-    #pragma omp parallel for default(none) shared(v, un, vn, pn) firstprivate(dx, dy, dt, rho, nu) collapse(2)
-    for (int i = 1; i < v.size() - 1; i++) {
-        for (int j = 1; j < v[0].size() - 1; j++) {
+    // #pragma omp parallel for default(none) shared(v, un, vn, pn, ranges) \
+    //     firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
+        for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             v[i][j] = vn[i][j] -
                 un[i][j] * (dt / dx) * (vn[i][j] - vn[i][j-1]) -
                 vn[i][j] * (dt / dy) * (vn[i][j] - vn[i-1][j]) -
@@ -329,17 +342,15 @@ void printDownSampled(
     int xStride,
     int yStride,
     int nx,
-    int ny,
-    double xLen,
-    double yLen
+    int ny
 ) {
-    vector<vector<double>> global_ptr;
+    vector<double> global_ptr;
 
     if (my_rank != 0) {
-        vector<vector<double>> empty_global;
+       vector<double> empty_global;
         downSampleAndGather(a, empty_global, my_rank, world_size, xStride, yStride, nx, ny);
     } else {
-        vector<vector<double>> globalA(nx / xStride, vector<double>(ny / yStride, 0.0));
+        vector<double> globalA((nx / xStride) * (ny / yStride), 0.0);
         downSampleAndGather(a, globalA, my_rank, world_size, xStride, yStride, nx, ny);
         global_ptr.swap(globalA);
     }
@@ -348,13 +359,13 @@ void printDownSampled(
 
     if (my_rank == 0) {
         string file_path = "./results/nsStep11_"; file_path.push_back(name);
-        printForPlot(global_ptr, file_path, xLen, yLen);
+        printForPlot(global_ptr, file_path, ny / yStride);
     }
 }
 
 void downSampleAndGather(
     vector<vector<double>>& a,
-    vector<vector<double>>& a_global,
+    vector<double>& a_global,
     int my_rank,
     int world_size,
     int xStride,
@@ -362,48 +373,27 @@ void downSampleAndGather(
     int nx,
     int ny
 ) {
-    // sizes of global and local strided arrays
-    int sizes[2] = { static_cast<int>(nx / xStride),  static_cast<int>(ny / yStride) };
     int subsizes[2] = { static_cast<int>((a.size() - 2) / xStride),  static_cast<int>(ny / yStride) };
-    int starts[2] = { 0, 0 };
-    MPI_Datatype columnSize, columnOffset;
-
-    MPI_Type_create_subarray(2, sizes, subsizes, starts, MPI_ORDER_C, MPI_DOUBLE, &columnSize);
-    MPI_Type_create_resized(columnSize, 0, subsizes[0]*sizeof(double), &columnOffset);
-    MPI_Type_commit(&columnOffset);
 
     // fill the local strided array with the sparse grid of values from 'a'
-    vector<vector<double>> a_strided(subsizes[0], vector<double>(subsizes[1], 0.0));
-    for (int i = 0; i < subsizes[0] - 1; i++) {
-        for (int j = 0; j < subsizes[1] - 1; j++) {
-            a_strided[i][j] = a[i * xStride][j * yStride];
+    // vector<vector<double>> a_strided(subsizes[0], vector<double>(subsizes[1], 0.0));
+
+    // using a flat array s.t. values are stored in contiguous memory (required for MPI_Gather)
+    vector<double> a_strided(subsizes[0] * subsizes[1]);
+    for (int i = 0; i < subsizes[0]; i++) {
+        for (int j = 0; j < subsizes[1]; j++) {
+            a_strided[i * subsizes[1] + j] = a[i * xStride][j * yStride];
         }
     }
 
-    int sendcounts[world_size];
-    int displs[world_size];
-    double *global_ptr = NULL;
-
-    if (my_rank == 0) {
-        global_ptr = &(a_global[0][0]);
-        for (int i=0; i<world_size; i++) {
-            sendcounts[i] = 1;
-            displs[i] = i;
-        }
-    }
-
-    // gather the local strided arrays into the global strided array
-    MPI_Gatherv(
-        &(a_strided[0][0]),
-        subsizes[1],
+    MPI_Gather(
+        &a_strided[0],
+        subsizes[0] * subsizes[1],
         MPI_DOUBLE,
-        global_ptr,
-        sendcounts,
-        displs,
-        columnOffset,
+        &a_global[0],
+        subsizes[0] * subsizes[1],
+        MPI_DOUBLE,
         0,
         MPI_COMM_WORLD
     );
-
-    MPI_Type_free(&columnOffset);
 }

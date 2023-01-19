@@ -1,35 +1,34 @@
 #include "utils.h"
 
 void printForPlot(
-    vector<vector<double>> const& a,
+    vector<double> const& a,
     string const& path,
-    double xLen, double yLen
+    int ny
 ) {
-    const auto nx = a.size();
-    const auto ny = a[0].size();
-
-    ofstream metaFile;
-    metaFile.open(path + ".meta");
-    metaFile << setprecision(10);
-    metaFile << nx << ", " << ny << ", " << xLen << ", " << yLen << "\n";
-    metaFile.close();
-
+    const int nx = a.size() / ny;
     ofstream dataFile;
     dataFile.open(path + ".dat");
-    dataFile << setprecision(10);
-    for (auto const& xlayer : a) {
-        for (auto const& val : xlayer) {
-            dataFile << val << " ";
+    for (int i = 0; i < nx; i++) {
+        for (int j = 0; j < ny - 1; j++) {
+            dataFile << a[i * ny + j] << " ";
         }
-        dataFile << "\n";
+        dataFile << a[i * ny + ny - 1] << "\n";
     }
     dataFile.close();
 }
 
 void flowPlot(
     string const& path,
-    string const& title
+    string const& title,
+    int nx, int ny,
+    double xLen, double yLen
 ) {
+    ofstream metaFile;
+    metaFile.open(path + ".meta");
+    metaFile << setprecision(10);
+    metaFile << nx << ", " << ny << ", " << xLen << ", " << yLen << "\n";
+    metaFile.close();
+
     stringstream plotCmd;
     plotCmd << "Python3 ./flowPlot.py " << path << " " << title;
     const string plotCmdString = plotCmd.str();

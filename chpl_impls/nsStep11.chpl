@@ -29,8 +29,13 @@ var p : [DOM] real = 0.0, // pressure scalar
     u : [DOM] real = 0.0, // x component of flow
     v : [DOM] real = 0.0; // y component of flow
 
+u_boundary(u);
+
 // run simulation
-runCavityFlowSim(p, u, v);
+runCavityFlowSim(u, v, p);
+writeln("\np:");
+writeln(p);
+
 
 // print results
 if createPlots {
@@ -44,6 +49,7 @@ if createPlots {
         "Cavity Flow Solution"
     );
 }
+
 
 proc runCavityFlowSim(ref u, ref v, ref p) {
     // temporary copies of computational domain
@@ -73,10 +79,6 @@ proc runCavityFlowSim(ref u, ref v, ref p) {
             u_np1(u, un, vn, p);
             v_np1(v, un, vn, p);
         }
-
-        // solve for u and v using the updated pressure values
-        u_boundary(u);
-        // v_boundary(v);
     }
 }
 

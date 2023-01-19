@@ -89,13 +89,12 @@ void printDownSampled(
     int my_rank,
     int world_size,
     int xStride, int yStride,
-    int nx, int ny,
-    double xLen, double yLen
+    int nx, int ny
 );
 
 void downSampleAndGather(
     vector<vector<double>>& a,
-    vector<vector<double>>& a_global,
+    vector<double>& a_global,
     const int my_rank,
     int world_size,
     int xStride, int yStride,
