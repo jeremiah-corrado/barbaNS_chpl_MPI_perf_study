@@ -23,21 +23,21 @@
 
 */
 
-void writeDistArray(vector<vector<double>>& a, int my_rank, int world_size) {
-    for (int p = 0; p < world_size; p++) {
-        if (my_rank == p) {
-            printf("On proc %d:\n", p);
-            for (int r = 0; r < a[0].size(); r++) {
-                printf("[%2.3f | ", a[0][r]);
-                for (int c = 1; c < a.size() - 1; c++) {
-                    printf("%2.3f ", a[c][r]);
-                }
-                printf("| %2.3f]\n", a[a.size()-1][r]);
-            }
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
-}
+// void writeDistArray(vector<vector<double>>& a, int my_rank, int world_size) {
+//     for (int p = 0; p < world_size; p++) {
+//         if (my_rank == p) {
+//             printf("On proc %d:\n", p);
+//             for (int r = 0; r < a[0].size(); r++) {
+//                 printf("[%2.3f | ", a[0][r]);
+//                 for (int c = 1; c < a.size() - 1; c++) {
+//                     printf("%2.3f ", a[c][r]);
+//                 }
+//                 printf("| %2.3f]\n", a[a.size()-1][r]);
+//             }
+//         }
+//         MPI_Barrier(MPI_COMM_WORLD);
+//     }
+// }
 
 int main(int argc, char *argv[]) {
     MPI_Init(&argc, &argv);
@@ -80,26 +80,14 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // define the sizes of various arrays along x and y (giving any extra elements to rank 0)
-    const int global_sizes   [2] = {nx, ny},
-              local_sizes    [2] = {((nx%size != 0 && rank == 0) ? (nx/size) + (nx%size) : nx / size), ny},
-              global_strided [2] = {nx / xStride, ny / yStride},
-              local_strided  [2] = {local_sizes[0] / xStride, local_sizes[1] / yStride};
+    // define the sizes of the local sub-arrays - not including halos (giving extra elements to rank 0)
+    const int local_sizes[2] = {((nx%size != 0 && rank == 0) ? (nx/size) + (nx%size) : nx / size), ny};
 
-    // define the iteration bounds (handling edge cases - halos on the left and right are unused)
+    // define the iteration bounds (handling edge cases - halos on the left and right of the domain are unused)
     const int local_iter_ranges[2][2] = {
         { (rank == 0) ? 2 : 1, local_sizes[0] + ((rank == size-1) ? 0 : 1) },
         { 1, local_sizes[1] - 1 }
     };
-
-    printf(
-        "From rank %d : local size [%d, %d] \t global size [%d, %d] \t i-range [%d - %d] \t j-range [%d - %d]\n",
-        rank,
-        local_sizes[0], local_sizes[1],
-        global_sizes[0], global_sizes[1],
-        local_iter_ranges[0][0], local_iter_ranges[0][1],
-        local_iter_ranges[1][0], local_iter_ranges[1][1]
-    );
 
     vector<vector<double>> p(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
     vector<vector<double>> u(local_sizes[0] + 2, vector<double>(local_sizes[1], 0.0));
@@ -109,20 +97,22 @@ int main(int argc, char *argv[]) {
     // u-boundary on right wall
     if (rank == size - 1) {
         for(int j = 0; j < local_sizes[1]; j++) {
-            // u[u.size()-1] would be inside the unused halo
             u[u.size()-2][j] = 1.0;
+            // u[u.size()-1] would be inside the unused halo
         }
     }
 
-    // writeDistArray(p, rank, size);
+    // run simulation
     runCavityFlowSim(p, u, v, b, local_iter_ranges, nt, nit, size, rank, dx, dy, dxy2, dt, rho, nu);
-    writeDistArray(p, rank, size);
 
-    printDownSampled(p, 'p', rank, size, xStride, yStride, nx, ny);
-    printDownSampled(u, 'u', rank, size, xStride, yStride, nx, ny);
-    printDownSampled(v, 'v', rank, size, xStride, yStride, nx, ny);
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (rank == 0) flowPlot("results/nsStep11", "Cavity Flow Solution", global_strided[0], global_strided[1], xLen, yLen);
+    // print results
+    #ifdef CREATEPLOTS
+        printDownSampled(p, 'p', "results/nsStep11", rank, size, xStride, yStride, nx, ny);
+        printDownSampled(u, 'u', "results/nsStep11", rank, size, xStride, yStride, nx, ny);
+        printDownSampled(v, 'v', "results/nsStep11", rank, size, xStride, yStride, nx, ny);
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (rank == 0) flowPlot("results/nsStep11", "Cavity Flow Solution", nx / xStride, ny / yStride, xLen, yLen);
+    #endif
 
     MPI_Finalize();
     return 0;
@@ -195,8 +185,8 @@ void comp_b(
 ) {
     double du, dv;
 
-    // #pragma omp parallel for default(none) shared(b, u, v, ranges) \
-    //     firstprivate(dx, dy, dt, rho) private(du, dv) collapse(2)
+    #pragma omp parallel for default(none) shared(b, u, v, ranges) \
+        firstprivate(dx, dy, dt, rho) private(du, dv) collapse(2)
     for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
         for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             du = u[i][j+1] - u[i][j-1];
@@ -223,8 +213,8 @@ void p_np1(
     const double dy,
     const double dxy2
 ) {
-    // #pragma omp parallel for default(none) shared(p, pn, b, ranges) \
-    //     firstprivate(dx, dy, dxy2) collapse(2)
+    #pragma omp parallel for default(none) shared(p, pn, b, ranges) \
+        firstprivate(dx, dy, dxy2) collapse(2)
     for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
         for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             p[i][j] = (
@@ -238,13 +228,13 @@ void p_np1(
 void p_boundary(vector<vector<double>>& p, int my_rank) {
     // left wall
     if (my_rank == 0) {
-        // #pragma omp parallel for default(none) shared(p)
+        #pragma omp parallel for default(none) shared(p)
         for (int j = 0; j < p[0].size(); j++) {
             p[1][j] = p[2][j];
         }
     }
     // top/bottom walls
-    // #pragma omp parallel for default(none) shared(p)
+    #pragma omp parallel for default(none) shared(p)
     for (int i = 0; i < p.size(); i++) {
         p[i][0] = p[i][1];
         p[i][p[0].size()-1] = p[i][p[0].size()-2];
@@ -264,8 +254,8 @@ void u_np1(
     const double nu
 
 ) {
-    // #pragma omp parallel for default(none) shared(u, un, vn, pn, ranges) \
-    //     firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    #pragma omp parallel for default(none) shared(u, un, vn, pn, ranges) \
+        firstprivate(dx, dy, dt, rho, nu) collapse(2)
     for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
         for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             u[i][j] = un[i][j] -
@@ -292,8 +282,8 @@ void v_np1(
     const double rho,
     const double nu
 ) {
-    // #pragma omp parallel for default(none) shared(v, un, vn, pn, ranges) \
-    //     firstprivate(dx, dy, dt, rho, nu) collapse(2)
+    #pragma omp parallel for default(none) shared(v, un, vn, pn, ranges) \
+        firstprivate(dx, dy, dt, rho, nu) collapse(2)
     for (int i = ranges[0][0]; i < ranges[0][1]; i++) {
         for (int j = ranges[1][0]; j < ranges[1][1]; j++) {
             v[i][j] = vn[i][j] -
@@ -308,6 +298,8 @@ void v_np1(
     }
 }
 
+// copy the edges of each sub-array into the neighboring rank's halos
+//  don't update rank 0's left halo or rank n's right halo
 void update_halos(
     vector<vector<double> >& a,
     int my_rank, int world_size,
@@ -332,68 +324,4 @@ void update_halos(
     if (my_rank < world_size - 1) {
         MPI_Recv(&a[a.size() - 1][0], num_y, MPI_DOUBLE, my_rank + 1, 2, MPI_COMM_WORLD, &status);
     }
-}
-
-void printDownSampled(
-    vector<vector<double>>& a,
-    char name,
-    int my_rank,
-    int world_size,
-    int xStride,
-    int yStride,
-    int nx,
-    int ny
-) {
-    vector<double> global_ptr;
-
-    if (my_rank != 0) {
-       vector<double> empty_global;
-        downSampleAndGather(a, empty_global, my_rank, world_size, xStride, yStride, nx, ny);
-    } else {
-        vector<double> globalA((nx / xStride) * (ny / yStride), 0.0);
-        downSampleAndGather(a, globalA, my_rank, world_size, xStride, yStride, nx, ny);
-        global_ptr.swap(globalA);
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    if (my_rank == 0) {
-        string file_path = "./results/nsStep11_"; file_path.push_back(name);
-        printForPlot(global_ptr, file_path, ny / yStride);
-    }
-}
-
-void downSampleAndGather(
-    vector<vector<double>>& a,
-    vector<double>& a_global,
-    int my_rank,
-    int world_size,
-    int xStride,
-    int yStride,
-    int nx,
-    int ny
-) {
-    int subsizes[2] = { static_cast<int>((a.size() - 2) / xStride),  static_cast<int>(ny / yStride) };
-
-    // fill the local strided array with the sparse grid of values from 'a'
-    // vector<vector<double>> a_strided(subsizes[0], vector<double>(subsizes[1], 0.0));
-
-    // using a flat array s.t. values are stored in contiguous memory (required for MPI_Gather)
-    vector<double> a_strided(subsizes[0] * subsizes[1]);
-    for (int i = 0; i < subsizes[0]; i++) {
-        for (int j = 0; j < subsizes[1]; j++) {
-            a_strided[i * subsizes[1] + j] = a[i * xStride][j * yStride];
-        }
-    }
-
-    MPI_Gather(
-        &a_strided[0],
-        subsizes[0] * subsizes[1],
-        MPI_DOUBLE,
-        &a_global[0],
-        subsizes[0] * subsizes[1],
-        MPI_DOUBLE,
-        0,
-        MPI_COMM_WORLD
-    );
 }
